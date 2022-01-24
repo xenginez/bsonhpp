@@ -72,6 +72,7 @@ namespace bson
 	{
 		while( true )
 		{
+			assert( !is.eof() && "inline int sget( std::istream & is )" );
 			int c = is.peek();
 
 			if( c == ' ' || c == '\r' || c == '\n' || c == '\t' )
@@ -88,6 +89,8 @@ namespace bson
 	{
 		while( true )
 		{
+			assert( !is.eof() && "inline int speek( std::istream & is )" );
+
 			int c = is.peek();
 
 			if( c == ' ' || c == '\r' || c == '\n' || c == '\t' )
@@ -228,12 +231,21 @@ namespace bson
 	public:
 		void to_json( std::ostream & os ) const
 		{
-			os << value;
+			os << std::to_string( value );
 		}
 
 		void from_json( std::istream & is )
 		{
-			is >> value;
+			std::string str;
+			if( speek( is ) == '-' )
+			{
+				str.push_back( sget( is ) );
+			}
+			while( speek( is ) >= '0' && speek( is ) <= '9' )
+			{
+				str.push_back( sget( is ) );
+			}
+			value = std::stoi( str );
 		}
 
 	private:
@@ -295,12 +307,21 @@ namespace bson
 	public:
 		void to_json( std::ostream & os ) const
 		{
-			os << value;
+			os << std::to_string( value );
 		}
 
 		void from_json( std::istream & is )
 		{
-			is >> value;
+			std::string str;
+			if( speek( is ) == '-' )
+			{
+				str.push_back( sget( is ) );
+			}
+			while( speek( is ) >= '0' && speek( is ) <= '9' )
+			{
+				str.push_back( sget( is ) );
+			}
+			value = std::stoll( str );
 		}
 
 	private:
@@ -709,11 +730,13 @@ namespace bson
 				if( smatch( is, R"(","subType":")" ) )
 				{
 					std::string subt;
-					while( is.peek() != '\"' )
+					while( speek( is ) != '\"' )
 					{
-						encode.push_back( is.get() );
+						subt.push_back( is.get() );
 					}
-					if( sget( is ) == '\"' )
+
+					assert( smatch( is, "\"}" ) && "void from_json( std::istream & is )" );
+
 					{
 						int bin = 0, i = 0;
 						auto length = encode.size();
@@ -756,9 +779,9 @@ namespace bson
 							}
 							i++;
 						}
-
-						btype = static_cast<binary_type>( std::stoi( subt, nullptr, 16 ) );
 					}
+
+					btype = static_cast<binary_type>( std::stoi( subt, nullptr, 16 ) );
 				}
 			}
 		}
@@ -1061,7 +1084,7 @@ namespace bson
 				}
 			}
 
-			if( smatch( is, R"((""options":")" ) )
+			if( smatch( is, R"(","options":")" ) )
 			{
 				while( is.peek() != '\"' )
 				{
@@ -1237,14 +1260,19 @@ namespace bson
 	public:
 		void to_json( std::ostream & os ) const
 		{
-			os << R"({ "t" : )" << value << R"(, "i" : 1 })";
+			os << R"({ "t" : )" << std::to_string( value ) << R"(, "i" : 1 })";
 		}
 
 		void from_json( std::istream & is )
 		{
 			assert( smatch( is, R"({"t":)" ) && "void from_json( std::istream & is )" );
 			{
-				is >> value;
+				std::string str;
+				while( speek( is ) >= '0' && speek( is ) <= '9' )
+				{
+					str.push_back( sget( is ) );
+				}
+				value = std::stoull( str );
 			}
 			assert( smatch( is, R"(,"i":1})" ) && "void from_json( std::istream & is )" );
 		}
@@ -1350,7 +1378,7 @@ namespace bson
 			os << "\"";
 			for( auto c : value )
 			{
-				os << std::setfill( '0' ) << std::setw( 2 ) << std::hex << c;
+				os << std::setfill( '0' ) << std::setw( 2 ) << std::hex << static_cast<std::uint32_t>( static_cast<std::uint8_t>( c ) );
 			}
 			os << "\"";
 		}
@@ -1363,8 +1391,8 @@ namespace bson
 				for( size_t i = 0; i < value.size(); i++ )
 				{
 					hex.push_back( is.get() ); hex.push_back( is.get() );
-
 					value[i] = std::stoi( hex, nullptr, 16 );
+					hex.clear();
 				}
 			}
 			assert( smatch( is, "\"" ) && "void from_json( std::istream & is )" );
@@ -1793,12 +1821,6 @@ namespace bson
 
 			nodes.push_back( { std::to_string( nodes.size() ), element< element_type::string_node >( val ) } );
 		}
-		void push_back( const element< element_type::decimal128_node >::decimal_t & val )
-		{
-			assert( get_type() == element_type::array_node && "element_list< type::array_node >" );
-
-			nodes.push_back( { std::to_string( nodes.size() ), element< element_type::decimal128_node >( val ) } );
-		}
 		template< element_type T > void push_back( const element< T > & val )
 		{
 			assert( get_type() == element_type::array_node && "element_list< type::array_node >" );
@@ -1966,20 +1988,6 @@ namespace bson
 			else
 			{
 				nodes.push_back( { key, element< element_type::string_node >( val ) } );
-			}
-		}
-		void insert( const std::string & key, const element< element_type::decimal128_node >::decimal_t & val )
-		{
-			assert( get_type() == element_type::document_node && "element_list< type::document_node >" );
-
-			auto it = find( key );
-			if( it != end() )
-			{
-				it->second = element< element_type::decimal128_node >( val );
-			}
-			else
-			{
-				nodes.push_back( { key, element< element_type::decimal128_node >( val ) } );
 			}
 		}
 		template< element_type T > void insert( const std::string & key, const element< T > & val )
@@ -2485,6 +2493,21 @@ namespace bson
 			node = std::move( arr );
 		}
 		break;
+		case 'n':
+		{
+			auto elem = element<element_type::null_node>();
+			elem.from_json( is );
+			node = std::move( elem );
+		}
+		break;
+		case 't':
+		case 'f':
+		{
+			auto elem = element<element_type::boolean_node>();
+			elem.from_json( is );
+			node = std::move( elem );
+		}
+		break;
 		default:
 			if( !is.eof() && ( speek( is ) >= '0' && speek( is ) <= '9' ) || speek( is ) == '.' || speek( is ) == '-' )
 			{
@@ -2512,18 +2535,6 @@ namespace bson
 						node = std::move( element< element_type::int32_node >( static_cast<std::int32_t>( n ) ) );
 					}
 				}
-			}
-			else if( ( !is.eof() && speek( is ) == 't' ) || ( !is.eof() && speek( is ) == 'f' ) )
-			{
-				auto elem = element<element_type::boolean_node>();
-				elem.from_json( is );
-				node = std::move( elem );
-			}
-			else if( !is.eof() && speek( is ) == 'n' )
-			{
-				auto elem = element<element_type::null_node>();
-				elem.from_json( is );
-				node = std::move( elem );
 			}
 			else
 			{

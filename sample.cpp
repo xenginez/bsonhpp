@@ -11,7 +11,8 @@ int main( int regc, char * argv[] )
 		std::pair{ "null", nullptr },
 		std::pair{ "int32", std::numeric_limits<std::int32_t>::min() },
 		std::pair{ "int64_t", std::numeric_limits<std::int64_t>::max() },
-		std::pair{ "double", std::numeric_limits<double>::min() },
+		std::pair{ "float", 123456.654321f },
+		std::pair{ "double", 123456.654321 },
 		std::pair{ "double-NaN", std::numeric_limits<double>::quiet_NaN() },
 		std::pair{ "double-Infinity", std::numeric_limits<double>::infinity() },
 		std::pair{ "string", "hello world!" },
@@ -28,7 +29,8 @@ int main( int regc, char * argv[] )
 											nullptr,
 											std::numeric_limits<std::int32_t>::min(),
 											std::numeric_limits<std::int64_t>::max(),
-											std::numeric_limits<double>::min(),
+											123456.654321f,
+											123456.654321,
 											"hello world!",
 											true,
 											bson::min_key_t(),
@@ -49,6 +51,11 @@ int main( int regc, char * argv[] )
 
 	std::stringstream sstream;
 	doc2.to_json( sstream );
+
+// 	std::cout << std::endl;
+// 	std::cout << sstream.str() << std::endl;
+// 	std::cout << std::endl;
+
 	doc1.from_json( sstream );
 
 	std::cout << std::endl;
