@@ -50,7 +50,6 @@ namespace bson
 		document_node = 0x03,
 		timestamp_node = 0x11,
 		object_id_node = 0x07,
-		decimal128_node = 0x13,
 
 		unknown_node = 0xEF,
 	};
@@ -116,7 +115,13 @@ namespace bson
 	}
 	inline bool smatch( std::istream & is, std::string_view delim )
 	{
-		return sread( is, delim.size() ) == delim;
+		auto pos = is.tellg();
+		if( sread( is, delim.size() ) == delim )
+		{
+			return true;
+		}
+		is.seekg( pos );
+		return false;
 	}
 
 
@@ -402,7 +407,7 @@ namespace bson
 			}
 			else if( std::isinf( value ) )
 			{
-				os << "\"Infinity\"";
+				os << "\"" << ( value < 0 ? "-" : "" ) << "Infinity" << "\"";
 			}
 			else
 			{
@@ -414,6 +419,13 @@ namespace bson
 		{
 			if( sget( is ) == '\"' )
 			{
+				bool neg = false;
+
+				if( speek( is ) == '-' )
+				{
+					neg = true;
+				}
+
 				if( speek( is ) == 'N' )
 				{
 					smatch( is, "NaN" );
@@ -424,7 +436,7 @@ namespace bson
 				{
 					smatch( is, "Infinity" );
 
-					value = std::numeric_limits< double >::infinity();
+					value = neg ? -std::numeric_limits< double >::infinity() : std::numeric_limits< double >::infinity();
 				}
 
 				assert( sget( is ) == '\"' && "void from_json( std::istream & is )" );
@@ -654,8 +666,8 @@ namespace bson
 
 			is.read( reinterpret_cast<char *>( &btype ), sizeof( btype ) );
 
-			value.resize( (std::size_t)sz - 5 );
-			is.read( reinterpret_cast<char *>( value.data() ), (std::size_t)sz - 5 );
+			value.resize( static_cast<std::size_t>( sz ) );
+			is.read( reinterpret_cast<char *>( value.data() ), static_cast< std::size_t >( sz ) );
 		}
 
 	public:
@@ -1402,200 +1414,6 @@ namespace bson
 		std::array<char, 12> value;
 	};
 
-	template<> class element< element_type::decimal128_node >
-	{
-	public:
-#pragma pack(push, 1)
-		struct decimal_t
-		{
-			std::uint64_t lo;
-			union
-			{
-				std::uint64_t hi;
-				struct
-				{
-					std::uint64_t hisig : 49;
-					std::uint64_t combination : 14;
-					std::uint64_t sign : 1;
-				};
-			};
-		};
-#pragma pack(pop)
-
-	public:
-		element() = default;
-
-		element( decimal_t val )
-			:value( val )
-		{
-
-		}
-
-		element( std::uint64_t hi, std::uint64_t lo )
-		{
-			value.lo = lo; value.hi = hi;
-		}
-
-		element( const element< element_type::decimal128_node > & val )
-			:value( val.value )
-		{
-
-		}
-
-		element & operator =( const element< element_type::decimal128_node > & val )
-		{
-			value = val.value;
-
-			return *this;
-		}
-
-		~element() = default;
-
-	public:
-		operator decimal_t() const
-		{
-			return value;
-		}
-
-		decimal_t get_value() const
-		{
-			return value;
-		}
-
-	public:
-		element_type get_type() const
-		{
-			return element_type::decimal128_node;
-		}
-
-		std::size_t get_size() const
-		{
-			return 128;
-		}
-
-		void serialize( std::ostream & os ) const
-		{
-			os.write( reinterpret_cast<const char *>( &value ), sizeof( value ) );
-		}
-
-		void deserialize( std::istream & is )
-		{
-			is.read( reinterpret_cast<char *>( &value ), sizeof( value ) );
-		}
-
-	public:
-		void to_json( std::ostream & os ) const
-		{
-			if( ( value.combination & ( 0xf8u << 6 ) ) == ( 0xf0u << 6 ) )
-			{
-				os << R"("Infinity")";
-			}
-			else if( ( value.combination & ( 0xfcu << 6 ) ) == ( 0xf8u << 6 ) )
-			{
-				os << R"("NaN")";
-			}
-			else
-			{
-				struct
-				{
-					int sign;
-					int exponent;
-					struct
-					{
-						uint64_t lo;
-						uint64_t hi;
-					} mantissa;
-				} unpacked;
-
-				unpacked.sign = value.sign;
-				unpacked.exponent = static_cast<int>( value.combination ) + ( -6176 );
-				unpacked.mantissa.hi = value.hisig;
-				unpacked.mantissa.lo = value.lo;
-
-				std::string str;
-				if( unpacked.sign == 1 ) str += "-";
-				str += std::to_string( unpacked.mantissa.hi ) + std::to_string( unpacked.mantissa.lo );
-
-				if( unpacked.exponent < 0 ) str.insert( str.begin() + ( str.size() - unpacked.exponent ), '.' );
-				else for( size_t i = 0; i < unpacked.exponent; i++ ) str.push_back( '0' );
-
-				os << "\"" << str << "\"";
-			}
-		}
-
-		void from_json( std::istream & is )
-		{
-			assert( smatch( is, "\"" ) && "void from_json( std::istream & is )" );
-			{
-				if( is.peek() == 'N' )
-				{
-					assert( smatch( is, "NaN" ) && "void from_json( std::istream & is )" );
-					value.combination = ( 0xf8u << 6 );
-				}
-				else if( is.peek() == 'I' )
-				{
-					assert( smatch( is, "Infinity" ) && "void from_json( std::istream & is )" );
-					value.combination = ( 0xf0u << 6 );
-				}
-				else
-				{
-					struct
-					{
-						int sign;
-						int exponent;
-						struct
-						{
-							uint64_t lo;
-							uint64_t hi;
-						} mantissa;
-					} unpacked;
-
-					unpacked.sign = 0;
-					unpacked.exponent = 0;
-					unpacked.mantissa.hi = 0;
-					unpacked.mantissa.lo = 0;
-
-					if( is.peek() == '-' )
-					{
-						is.get();
-						unpacked.sign = 1;
-					}
-
-					std::string num;
-					while( is.peek() == '.' || ( is.peek() >= '0' && is.peek() <= '9' ) )
-					{
-						num.push_back( is.get() );
-					}
-
-					auto pos = num.find( '.' );
-					if( pos == std::string::npos )
-					{
-						for( auto it = num.rbegin(); it != num.rend() && *it == '0'; ++it )
-						{
-							unpacked.exponent += 1;
-						}
-					}
-					else
-					{
-						unpacked.exponent = -int( pos );
-					}
-
-					unpacked.mantissa.hi = std::stoull( std::string( num.begin(), num.begin() + pos ) );
-					unpacked.mantissa.lo = std::stoull( std::string( num.begin() + pos + 1, num.end() ) );
-
-					value.sign = unpacked.sign;
-					value.combination = unpacked.exponent - 6176;
-					value.hisig = unpacked.mantissa.hi;
-					value.lo = unpacked.mantissa.lo;
-				}
-			}
-			assert( smatch( is, "\"" ) && "void from_json( std::istream & is )" );
-		}
-
-	private:
-		decimal_t value;
-	};
-
 	template< element_type T > class element
 	{
 	public:
@@ -1614,8 +1432,7 @@ namespace bson
 			element< element_type::datetime_node >,
 			element< element_type::document_node >,
 			element< element_type::timestamp_node >,
-			element< element_type::object_id_node >,
-			element< element_type::decimal128_node >
+			element< element_type::object_id_node >
 		>;
 
 	public:
@@ -2253,9 +2070,6 @@ namespace bson
 		case bson::element_type::object_id_node:
 			node = element< element_type::object_id_node >();
 			break;
-		case bson::element_type::decimal128_node:
-			node = element< element_type::decimal128_node >();
-			break;
 		default:
 			throw std::runtime_error( "bson::type unknown" );
 			break;
@@ -2281,7 +2095,6 @@ namespace bson
 							   []( const element< element_type::document_node > & val ) { return val.get_type(); },
 							   []( const element< element_type::timestamp_node > & val ) { return val.get_type(); },
 							   []( const element< element_type::object_id_node > & val ) { return val.get_type(); },
-							   []( const element< element_type::decimal128_node > & val ) { return val.get_type(); },
 						   }, node );
 	}
 	template< typename ... T > std::size_t get_node_size( const std::variant< T... > & node )
@@ -2304,14 +2117,18 @@ namespace bson
 							   []( const element< element_type::document_node > & val ) { return val.get_size(); },
 							   []( const element< element_type::timestamp_node > & val ) { return val.get_size(); },
 							   []( const element< element_type::object_id_node > & val ) { return val.get_size(); },
-							   []( const element< element_type::decimal128_node > & val ) { return val.get_size(); },
 						   }, node );
 	}
 	template< typename ... T > void node_deserialize( std::istream & is, std::variant< T... > & node )
 	{
+		if( node.index() == 0 )
+		{
+			node = element<element_type::document_node>();
+		}
+
 		std::visit( overloaded
 					{
-						[&]( std::monostate & val ) {},
+						[&]( std::monostate & val ){},
 						[&]( element< element_type::null_node > & val ) { val.deserialize( is ); },
 						[&]( element< element_type::int32_node > & val ) { val.deserialize( is ); },
 						[&]( element< element_type::int64_node > & val ) { val.deserialize( is ); },
@@ -2327,7 +2144,6 @@ namespace bson
 						[&]( element< element_type::document_node > & val ) { val.deserialize( is ); },
 						[&]( element< element_type::timestamp_node > & val ) { val.deserialize( is ); },
 						[&]( element< element_type::object_id_node > & val ) { val.deserialize( is ); },
-						[&]( element< element_type::decimal128_node > & val ) { val.deserialize( is ); },
 					}, node );
 	}
 	template< typename ... T > void node_serialize( std::ostream & os, const std::variant< T... > & node )
@@ -2350,7 +2166,6 @@ namespace bson
 						[&]( const element< element_type::document_node > & val ) { val.serialize( os ); },
 						[&]( const element< element_type::timestamp_node > & val ) { val.serialize( os ); },
 						[&]( const element< element_type::object_id_node > & val ) { val.serialize( os ); },
-						[&]( const element< element_type::decimal128_node > & val ) { val.serialize( os ); },
 					}, node );
 	}
 	template< typename ... T > void node_to_json( std::ostream & os, const std::variant< T... > & node )
@@ -2373,7 +2188,6 @@ namespace bson
 						[&os]( const element< element_type::document_node > & val ) { val.to_json( os ); },
 						[&os]( const element< element_type::timestamp_node > & val ) { os << R"({ "$timestamp" : )"; val.to_json( os ); os << " }"; },
 						[&os]( const element< element_type::object_id_node > & val ) { os << R"({ "$oid" : )"; val.to_json( os ); os << " }"; },
-						[&os]( const element< element_type::decimal128_node > & val ) { os << R"({ "$numberDecimal" : )"; val.to_json( os ); os << " }"; },
 					}, node );
 	}
 	template< typename ... T > void node_from_json( std::istream & is, std::variant< T... > & node )
@@ -2401,12 +2215,6 @@ namespace bson
 					auto date = element< element_type::datetime_node >();
 					date.from_json( is );
 					node = std::move( date );
-				}
-				else if( elem.get_value() == "$numberDecimal" )
-				{
-					auto dec = element< element_type::decimal128_node >();
-					dec.from_json( is );
-					node = std::move( dec );
 				}
 				else if( elem.get_value() == "$numberDouble" )
 				{
@@ -2456,6 +2264,10 @@ namespace bson
 			else if( elem.get_value() == "Infinity" )
 			{
 				node = element<element_type::double_node>( std::numeric_limits<double>::infinity() );
+			}
+			else if( elem.get_value() == "-Infinity" )
+			{
+				node = element<element_type::double_node>( -std::numeric_limits<double>::infinity() );
 			}
 			else
 			{
@@ -2559,7 +2371,25 @@ namespace bson
 	using document_t = element< element_type::document_node >;
 	using timestamp_t = element< element_type::timestamp_node >;
 	using object_id_t = element< element_type::object_id_node >;
-	using decimal128_t = element< element_type::decimal128_node >;
+
+	using node_t = std::variant< 
+		std::monostate,
+		null_t,
+		int32_t,
+		int64_t,
+		array_t,
+		double_t,
+		string_t,
+		binary_t,
+		boolean_t,
+		min_key_t,
+		max_key_t,
+		regular_t,
+		datetime_t,
+		document_t,
+		timestamp_t,
+		object_id_t
+	>;
 }
 
 #endif//BSON_HPP__B008D87D_A662_47B8_8066_0121BFDF3473
